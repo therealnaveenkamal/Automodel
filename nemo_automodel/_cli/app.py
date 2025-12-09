@@ -16,6 +16,8 @@ import argparse
 import importlib.util
 import logging
 import os
+import signal
+import sys
 import time
 from pathlib import Path
 
@@ -280,26 +282,30 @@ def main():
     config_path = args.config.resolve()
     config = load_yaml(config_path)
 
-    if slurm_config := config.pop("slurm", None):
-        logging.info("Launching job via SLURM")
-        # if there's no `job_dir` in the slurm section, use cwd/slurm_job/unix_timestamp
-        # otherwise will use slurm.job_dir / unix_timestamp
-        job_dir = os.path.join(
-            slurm_config.pop("job_dir", os.path.join(os.getcwd(), "slurm_jobs")), str(int(time.time()))
-        )
-        os.makedirs(job_dir, exist_ok=True)
+    try:
+        if slurm_config := config.pop("slurm", None):
+            logging.info("Launching job via SLURM")
+            # if there's no `job_dir` in the slurm section, use cwd/slurm_job/unix_timestamp
+            # otherwise will use slurm.job_dir / unix_timestamp
+            job_dir = os.path.join(
+                slurm_config.pop("job_dir", os.path.join(os.getcwd(), "slurm_jobs")), str(int(time.time()))
+            )
+            os.makedirs(job_dir, exist_ok=True)
 
-        # Write job's config
-        job_conf_path = os.path.join(job_dir, "job_config.yaml")
-        with open(job_conf_path, "w") as fp:
-            yaml.dump(config, fp, default_flow_style=False, sort_keys=False)
-        logging.info(f"Logging Slurm job in: {job_dir}")
-        return launch_with_slurm(args, job_conf_path, job_dir, slurm_config, extra_args=extra)
-    elif "k8s" in config or "kubernetes" in config:
-        # launch job on kubernetes.
-        raise NotImplementedError("kubernetes support is pending")
-    else:
-        return run_interactive(args)
+            # Write job's config
+            job_conf_path = os.path.join(job_dir, "job_config.yaml")
+            with open(job_conf_path, "w") as fp:
+                yaml.dump(config, fp, default_flow_style=False, sort_keys=False)
+            logging.info(f"Logging Slurm job in: {job_dir}")
+            return launch_with_slurm(args, job_conf_path, job_dir, slurm_config, extra_args=extra)
+        elif "k8s" in config or "kubernetes" in config:
+            # launch job on kubernetes.
+            raise NotImplementedError("kubernetes support is pending")
+        else:
+            return run_interactive(args)
+    except KeyboardInterrupt:
+        logging.error("KeyboardInterrupt caught, cleaning up processes")
+        os.killpg(os.getpgid(os.getpid()), signal.SIGKILL)
 
 
 if __name__ == "__main__":
